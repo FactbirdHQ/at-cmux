@@ -33,7 +33,6 @@ bitfield-struct = "0.8.0"
 
 embedded-io-async = { version = "0.6.1" }
 embassy-futures = { version = "0.1.2" }
-embassy-time = { version = "0.5.0" }
 embassy-sync = { version = "0.7.0" }
 
 crc = "3.0"
