@@ -1,0 +1,45 @@
+[package]
+name = "at-cmux"
+version = "0.1.0"
+description = "Multiplexes serial channels using the CMUX standard (3GPP TS 27.010)"
+keywords = ["embedded", "cmux", "embedded-io-async", "async", "no_std"]
+categories = [
+    "embedded",
+    "hardware-support",
+    "no-std::no-alloc",
+    "network-programming",
+    "asynchronous",
+]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+repository = "https://github.com/factbird/at-cmux"
+documentation = "https://docs.rs/at-cmux"
+readme = "README.md"
+
+[features]
+defmt = ["dep:defmt"]
+log = ["dep:log"]
+
+[dependencies]
+defmt = { version = "0.3", optional = true }
+log = { version = "0.4.14", optional = true }
+
+heapless = { version = "0.9", default-features = false }
+futures = { version = "0.3.17", default-features = false, features = [
+    "async-await",
+] }
+
+bitfield-struct = "0.8.0"
+
+embedded-io-async = { version = "0.6.1" }
+embassy-futures = { version = "0.1.2" }
+embassy-time = { version = "0.5.0" }
+embassy-sync = { version = "0.7.0" }
+
+crc = "3.0"
+
+[dev-dependencies]
+tokio = { version = "1.37", features = ["rt", "macros"] }
+
+[package.metadata.docs.rs]
+features = ["defmt"]
