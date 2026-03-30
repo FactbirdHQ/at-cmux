@@ -166,9 +166,13 @@ impl<'a> Information<'a> {
             Information::FlowControlOnCommand(_) => InformationType::FlowControlOnCommand,
             Information::FlowControlOffCommand(_) => InformationType::FlowControlOffCommand,
             Information::ModemStatusCommand(_) => InformationType::ModemStatusCommand,
-            Information::NonSupportedCommandResponse(_) => InformationType::NonSupportedCommandResponse,
+            Information::NonSupportedCommandResponse(_) => {
+                InformationType::NonSupportedCommandResponse
+            }
             Information::RemoteLineStatusCommand(_) => InformationType::RemoteLineStatusCommand,
-            Information::RemotePortNegotiationCommand => InformationType::RemotePortNegotiationCommand,
+            Information::RemotePortNegotiationCommand => {
+                InformationType::RemotePortNegotiationCommand
+            }
             Information::PowerSavingControl => InformationType::PowerSavingControl,
             Information::MultiplexerCloseDown(_) => InformationType::MultiplexerCloseDown,
             Information::TestCommand => InformationType::TestCommand,
@@ -214,7 +218,10 @@ impl<'a> Information<'a> {
             Information::ModemStatusCommand(inner) => inner.write(writer).await,
             Information::NonSupportedCommandResponse(inner) => inner.write(writer).await,
             Information::RemoteLineStatusCommand(inner) => inner.write(writer).await,
-            Information::Data(d) => writer.write_all(d).await.map_err(|e| Error::Write(e.kind())),
+            Information::Data(d) => writer
+                .write_all(d)
+                .await
+                .map_err(|e| Error::Write(e.kind())),
             Information::RemotePortNegotiationCommand => todo!(),
             Information::PowerSavingControl => todo!(),
             Information::MultiplexerCloseDown(inner) => inner.write(writer).await,
@@ -231,12 +238,20 @@ impl<'a> Information<'a> {
         let inner_data = read_ea(&buf[1..]);
 
         Ok(match info_type {
-            InformationType::ParameterNegotiation => Self::ParameterNegotiation(ParameterNegotiation { cr }),
+            InformationType::ParameterNegotiation => {
+                Self::ParameterNegotiation(ParameterNegotiation { cr })
+            }
             InformationType::PowerSavingControl => Self::PowerSavingControl,
-            InformationType::MultiplexerCloseDown => Self::MultiplexerCloseDown(MultiplexerCloseDown { cr }),
+            InformationType::MultiplexerCloseDown => {
+                Self::MultiplexerCloseDown(MultiplexerCloseDown { cr })
+            }
             InformationType::TestCommand => Self::TestCommand,
-            InformationType::FlowControlOnCommand => Self::FlowControlOnCommand(FlowControlOnCommand { cr }),
-            InformationType::FlowControlOffCommand => Self::FlowControlOffCommand(FlowControlOffCommand { cr }),
+            InformationType::FlowControlOnCommand => {
+                Self::FlowControlOnCommand(FlowControlOnCommand { cr })
+            }
+            InformationType::FlowControlOffCommand => {
+                Self::FlowControlOffCommand(FlowControlOffCommand { cr })
+            }
             InformationType::ModemStatusCommand => {
                 let brk = if inner_data.len() == 3 {
                     Some(Break::from_bits(inner_data[2]))
@@ -257,11 +272,13 @@ impl<'a> Information<'a> {
                 })
             }
             InformationType::RemotePortNegotiationCommand => Self::RemotePortNegotiationCommand,
-            InformationType::RemoteLineStatusCommand => Self::RemoteLineStatusCommand(RemoteLineStatusCommand {
-                cr,
-                dlci: inner_data[0] >> 2,
-                remote_line_status: RemoteLineStatus::from(inner_data[1]),
-            }),
+            InformationType::RemoteLineStatusCommand => {
+                Self::RemoteLineStatusCommand(RemoteLineStatusCommand {
+                    cr,
+                    dlci: inner_data[0] >> 2,
+                    remote_line_status: RemoteLineStatus::from(inner_data[1]),
+                })
+            }
             InformationType::ServiceNegotiationCommand => Self::ServiceNegotiationCommand,
         })
     }
@@ -344,7 +361,10 @@ impl Info for ParameterNegotiation {
 
         // TODO: Add Parameters!
 
-        writer.write_all(&buf).await.map_err(|e| Error::Write(e.kind()))
+        writer
+            .write_all(&buf)
+            .await
+            .map_err(|e| Error::Write(e.kind()))
     }
 }
 
@@ -667,7 +687,10 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
                 Self::read_exact(reader, &mut header[..1]).await?;
                 flag_count += 1;
                 if flag_count >= 100 {
-                    error!("Found {} consecutive FLAG bytes. Stream may be stuck.", flag_count);
+                    error!(
+                        "Found {} consecutive FLAG bytes. Stream may be stuck.",
+                        flag_count
+                    );
                     return Err(Error::MalformedFrame);
                 }
             }
@@ -767,7 +790,10 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
         Ok(info)
     }
 
-    pub(crate) async fn copy<W: embedded_io_async::Write>(&mut self, w: &mut W) -> Result<(), Error> {
+    pub(crate) async fn copy<W: embedded_io_async::Write>(
+        &mut self,
+        w: &mut W,
+    ) -> Result<(), Error> {
         let total_len = self.len;
         let frame_id = self.id;
 
@@ -843,7 +869,11 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
     pub async fn finalize(mut self) -> Result<(), Error> {
         while self.len > 0 {
             // Discard any information here
-            let buf = self.reader.fill_buf().await.map_err(|e| Error::Read(e.kind()))?;
+            let buf = self
+                .reader
+                .fill_buf()
+                .await
+                .map_err(|e| Error::Read(e.kind()))?;
             if buf.is_empty() {
                 return Err(Error::Read(embedded_io_async::ErrorKind::BrokenPipe));
             }
@@ -862,7 +892,10 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
         if trailer[1] != FLAG {
             error!("Malformed frame! Expected FLAG {:#02x} but got {:#02x}. Trailer: [{:#02x}, {:#02x}]",
                 FLAG, trailer[1], trailer[0], trailer[1]);
-            error!("Frame info: id={}, type={:?}, expected_len={}", self.id, self.frame_type, self.len);
+            error!(
+                "Frame info: id={}, type={:?}, expected_len={}",
+                self.id, self.frame_type, self.len
+            );
 
             // Try to resynchronize by searching for the next FLAG
             // Start by checking if trailer[0] is a FLAG
@@ -875,10 +908,14 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
             // Search forward for a FLAG to resynchronize
             warn!("Searching for next FLAG to resynchronize stream...");
             let mut search_count = 0;
-            const MAX_SEARCH: usize = 512;  // Prevent infinite search
+            const MAX_SEARCH: usize = 512; // Prevent infinite search
 
             loop {
-                let buf = self.reader.fill_buf().await.map_err(|e| Error::Read(e.kind()))?;
+                let buf = self
+                    .reader
+                    .fill_buf()
+                    .await
+                    .map_err(|e| Error::Read(e.kind()))?;
                 if buf.is_empty() {
                     error!("EOF while searching for FLAG after {} bytes", search_count);
                     return Err(Error::Read(embedded_io_async::ErrorKind::BrokenPipe));
@@ -889,7 +926,10 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
                     // Found a FLAG! Consume up to (but not including) the FLAG
                     // so the next RxHeader::read() will find it
                     self.reader.consume(pos);
-                    warn!("Found FLAG after searching {} bytes, stream resynchronized", search_count + pos);
+                    warn!(
+                        "Found FLAG after searching {} bytes, stream resynchronized",
+                        search_count + pos
+                    );
                     return Err(Error::MalformedFrame);
                 }
 
@@ -899,15 +939,24 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
                 self.reader.consume(consumed);
 
                 if search_count >= MAX_SEARCH {
-                    error!("Failed to find FLAG after searching {} bytes, giving up", search_count);
+                    error!(
+                        "Failed to find FLAG after searching {} bytes, giving up",
+                        search_count
+                    );
                     return Err(Error::MalformedFrame);
                 }
             }
         }
 
         if expected_fcs != GOOD_FCS {
-            error!("Bad CRC! Expected {:#02x} but got {:#02x}", GOOD_FCS, expected_fcs);
-            error!("Frame info: id={}, type={:?}, len={}", self.id, self.frame_type, self.len);
+            error!(
+                "Bad CRC! Expected {:#02x} but got {:#02x}",
+                GOOD_FCS, expected_fcs
+            );
+            error!(
+                "Frame info: id={}, type={:?}, len={}",
+                self.id, self.frame_type, self.len
+            );
             // Stream position should be OK (we're at the FLAG), so just return error
             // The next read will start at the FLAG we just validated
             return Err(Error::Crc);
@@ -940,7 +989,10 @@ pub trait Frame {
                 (information_len as u8) << 1 | EA,
             ];
 
-            writer.write_all(&header).await.map_err(|e| Error::Write(e.kind()))?;
+            writer
+                .write_all(&header)
+                .await
+                .map_err(|e| Error::Write(e.kind()))?;
 
             0xFF - FCS.checksum(&header[1..])
         } else {
@@ -954,7 +1006,10 @@ pub trait Frame {
                 b2,
             ];
 
-            writer.write_all(&header).await.map_err(|e| Error::Write(e.kind()))?;
+            writer
+                .write_all(&header)
+                .await
+                .map_err(|e| Error::Write(e.kind()))?;
 
             0xFF - FCS.checksum(&header[1..])
         };
@@ -1112,8 +1167,8 @@ mod tests {
     #[tokio::test]
     async fn decode() {
         let data = [
-            249, 9, 239, 49, 3, 150, 105, 234, 248, 41, 94, 51, 227, 143, 53, 55, 158, 102, 155, 248, 170, 78, 80, 79,
-            181, 34, 8, 126, 245, 249,
+            249, 9, 239, 49, 3, 150, 105, 234, 248, 41, 94, 51, 227, 143, 53, 55, 158, 102, 155,
+            248, 170, 78, 80, 79, 181, 34, 8, 126, 245, 249,
         ];
 
         let mut reader = &data[..];
@@ -1131,8 +1186,8 @@ mod tests {
         assert_eq!(
             &channel_buf[..len],
             &[
-                3, 150, 105, 234, 248, 41, 94, 51, 227, 143, 53, 55, 158, 102, 155, 248, 170, 78, 80, 79, 181, 34, 8,
-                126
+                3, 150, 105, 234, 248, 41, 94, 51, 227, 143, 53, 55, 158, 102, 155, 248, 170, 78,
+                80, 79, 181, 34, 8, 126
             ]
         )
     }

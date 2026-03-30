@@ -21,12 +21,12 @@ mod fmt;
 mod frame;
 
 use core::cell::{Cell, RefCell};
-use core::future::{Future, poll_fn};
+use core::future::{poll_fn, Future};
 use core::mem::MaybeUninit;
 use core::pin::pin;
 use core::task::Poll;
 
-use embassy_futures::select::{Either, select, select_slice};
+use embassy_futures::select::{select, select_slice, Either};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::pipe::{Pipe, Reader, Writer};
 use embassy_sync::signal::Signal;
@@ -63,8 +63,14 @@ impl Lines {
         if !self.rx.get().0.dv() {
             if !self.hangup.get() {
                 let (control, _brk) = self.rx.get();
-                warn!("HANGUP detected! Control: rtc={} rtr={} ic={} dv={}, mask={:?}",
-                    control.rtc(), control.rtr(), control.ic(), control.dv(), self.hangup_mask.get());
+                warn!(
+                    "HANGUP detected! Control: rtc={} rtr={} ic={} dv={}, mask={:?}",
+                    control.rtc(),
+                    control.rtr(),
+                    control.ic(),
+                    control.dv(),
+                    self.hangup_mask.get()
+                );
             }
         }
     }
@@ -219,7 +225,11 @@ impl<'a, const N: usize, const BUF: usize> Runner<'a, N, BUF> {
                 .write(&mut port_w)
                 .await
                 {
-                    error!("Failed to send SABM for channel {}: {:?}", channel_id + 1, e);
+                    error!(
+                        "Failed to send SABM for channel {}: {:?}",
+                        channel_id + 1,
+                        e
+                    );
                     return Err(e);
                 }
             }
@@ -258,7 +268,11 @@ impl<'a, const N: usize, const BUF: usize> Runner<'a, N, BUF> {
                     };
 
                     if let Err(e) = frame.write(&mut port_w).await {
-                        error!("CMUX Runner: CH{} failed to write UIH frame: {:?}", i + 1, e);
+                        error!(
+                            "CMUX Runner: CH{} failed to write UIH frame: {:?}",
+                            i + 1,
+                            e
+                        );
                         return Err(e);
                     }
 
@@ -269,8 +283,10 @@ impl<'a, const N: usize, const BUF: usize> Runner<'a, N, BUF> {
 
                 Either::Second(Err(e)) => {
                     consecutive_errors += 1;
-                    error!("CMUX Runner: RX error: {:?}. Consecutive errors: {}/{}",
-                        e, consecutive_errors, MAX_CONSECUTIVE_ERRORS);
+                    error!(
+                        "CMUX Runner: RX error: {:?}. Consecutive errors: {}/{}",
+                        e, consecutive_errors, MAX_CONSECUTIVE_ERRORS
+                    );
 
                     if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
                         error!("Too many consecutive frame errors! Stream is likely corrupted. Terminating CMUX.");
@@ -295,13 +311,18 @@ impl<'a, const N: usize, const BUF: usize> Runner<'a, N, BUF> {
                                         e, consecutive_errors, MAX_CONSECUTIVE_ERRORS);
 
                                     if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-                                        error!("Too many consecutive frame errors! Terminating CMUX.");
+                                        error!(
+                                            "Too many consecutive frame errors! Terminating CMUX."
+                                        );
                                         return Err(e);
                                     }
 
                                     // Try to finalize to resynchronize, then continue
                                     if let Err(fin_err) = header.finalize().await {
-                                        error!("Failed to finalize after info read error: {:?}", fin_err);
+                                        error!(
+                                            "Failed to finalize after info read error: {:?}",
+                                            fin_err
+                                        );
                                     }
                                     continue;
                                 }
@@ -314,8 +335,7 @@ impl<'a, const N: usize, const BUF: usize> Runner<'a, N, BUF> {
                                     Information::MultiplexerCloseDown(_cld) => {
                                         break;
                                     }
-                                    Information::TestCommand => {
-                                    }
+                                    Information::TestCommand => {}
                                     Information::ModemStatusCommand(msc) => {
                                         // Validate DLCI is within bounds
                                         let channel_idx = msc.dlci as usize - 1;
@@ -381,7 +401,10 @@ impl<'a, const N: usize, const BUF: usize> Runner<'a, N, BUF> {
                                         .write(&mut port_w)
                                         .await
                                         {
-                                            error!("Failed to send NonSupportedCommandResponse: {:?}", e);
+                                            error!(
+                                                "Failed to send NonSupportedCommandResponse: {:?}",
+                                                e
+                                            );
                                             return Err(e);
                                         }
 
@@ -398,12 +421,14 @@ impl<'a, const N: usize, const BUF: usize> Runner<'a, N, BUF> {
                                 }
                             } else {
                                 // received ack for a command
-                                if let Information::NonSupportedCommandResponse(NonSupportedCommandResponse {
-                                    command_type,
-                                    ..
-                                }) = info
+                                if let Information::NonSupportedCommandResponse(
+                                    NonSupportedCommandResponse { command_type, .. },
+                                ) = info
                                 {
-                                    warn!("Mobile station didn't support command: {:?}", command_type);
+                                    warn!(
+                                        "Mobile station didn't support command: {:?}",
+                                        command_type
+                                    );
                                 }
                             }
                         }
@@ -454,15 +479,22 @@ impl<'a, const N: usize, const BUF: usize> Runner<'a, N, BUF> {
                                 warn!("Received SABM for invalid channel ID {}: index {} out of bounds (max {})",
                                     header.id(), channel_id, N - 1);
                                 // Respond with DM (Disconnected Mode) to reject the channel
-                                if let Err(e) = (frame::Dm { id: header.id() }).write(&mut port_w).await {
+                                if let Err(e) =
+                                    (frame::Dm { id: header.id() }).write(&mut port_w).await
+                                {
                                     error!("Failed to send DM for out-of-bounds SABM: {:?}", e);
                                     return Err(e);
                                 }
                                 continue;
                             }
                             self.lines[channel_id].opened.set(true);
-                            if let Err(e) = (frame::Ua { id: header.id() }).write(&mut port_w).await {
-                                error!("Failed to send UA for channel {} SABM: {:?}", channel_id + 1, e);
+                            if let Err(e) = (frame::Ua { id: header.id() }).write(&mut port_w).await
+                            {
+                                error!(
+                                    "Failed to send UA for channel {} SABM: {:?}",
+                                    channel_id + 1,
+                                    e
+                                );
                                 return Err(e);
                             }
                         }
@@ -514,7 +546,9 @@ impl<'a, const N: usize, const BUF: usize> Runner<'a, N, BUF> {
                                 warn!("Received DISC for invalid channel ID {}: index {} out of bounds (max {})",
                                     header.id(), channel_id, N - 1);
                                 // Respond with DM to acknowledge the disconnect
-                                if let Err(e) = (frame::Dm { id: header.id() }).write(&mut port_w).await {
+                                if let Err(e) =
+                                    (frame::Dm { id: header.id() }).write(&mut port_w).await
+                                {
                                     error!("Failed to send DM for out-of-bounds DISC: {:?}", e);
                                     return Err(e);
                                 }
@@ -522,13 +556,25 @@ impl<'a, const N: usize, const BUF: usize> Runner<'a, N, BUF> {
                             }
                             if self.lines[channel_id].opened.get() {
                                 self.lines[channel_id].opened.set(false);
-                                if let Err(e) = (frame::Ua { id: header.id() }).write(&mut port_w).await {
-                                    error!("Failed to send UA for channel {} DISC: {:?}", channel_id + 1, e);
+                                if let Err(e) =
+                                    (frame::Ua { id: header.id() }).write(&mut port_w).await
+                                {
+                                    error!(
+                                        "Failed to send UA for channel {} DISC: {:?}",
+                                        channel_id + 1,
+                                        e
+                                    );
                                     return Err(e);
                                 }
                             } else {
-                                if let Err(e) = (frame::Dm { id: header.id() }).write(&mut port_w).await {
-                                    error!("Failed to send DM for channel {} DISC: {:?}", channel_id + 1, e);
+                                if let Err(e) =
+                                    (frame::Dm { id: header.id() }).write(&mut port_w).await
+                                {
+                                    error!(
+                                        "Failed to send DM for channel {} DISC: {:?}",
+                                        channel_id + 1,
+                                        e
+                                    );
                                     return Err(e);
                                 }
                             }
@@ -537,8 +583,10 @@ impl<'a, const N: usize, const BUF: usize> Runner<'a, N, BUF> {
 
                     if let Err(e) = header.finalize().await {
                         consecutive_errors += 1;
-                        error!("Failed to finalize header: {:?}. Consecutive errors: {}/{}",
-                            e, consecutive_errors, MAX_CONSECUTIVE_ERRORS);
+                        error!(
+                            "Failed to finalize header: {:?}. Consecutive errors: {}/{}",
+                            e, consecutive_errors, MAX_CONSECUTIVE_ERRORS
+                        );
 
                         if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
                             error!("Too many consecutive frame errors! Stream is corrupted. Terminating CMUX.");
@@ -567,7 +615,9 @@ impl<'a, const N: usize, const BUF: usize> Runner<'a, N, BUF> {
         if *self.control_channel_opened.borrow() {
             if let Err(e) = (frame::Uih {
                 id: 0,
-                information: Information::MultiplexerCloseDown(MultiplexerCloseDown { cr: frame::CR::Command }),
+                information: Information::MultiplexerCloseDown(MultiplexerCloseDown {
+                    cr: frame::CR::Command,
+                }),
             })
             .write(&mut port_w)
             .await
@@ -598,7 +648,13 @@ impl<T, const N: usize> MaybeUninitArray<T, N> {
 
 impl<'a, const BUF: usize> Channel<'a, BUF> {
     /// Split the channel into RX, TX, and lines handles.
-    pub fn split(self) -> (ChannelRx<'a, BUF>, ChannelTx<'a, BUF>, ChannelLines<'a, BUF>) {
+    pub fn split(
+        self,
+    ) -> (
+        ChannelRx<'a, BUF>,
+        ChannelTx<'a, BUF>,
+        ChannelLines<'a, BUF>,
+    ) {
         (
             ChannelRx {
                 rx: self.rx,
@@ -771,7 +827,10 @@ fn wait_for_hangup(lines: &Lines) -> impl Future<Output = ()> + '_ {
     })
 }
 
-fn check_hangup<'a, F, R>(fut: F, lines: &'a Lines) -> impl Future<Output = Result<R, ChannelError>> + 'a
+fn check_hangup<'a, F, R>(
+    fut: F,
+    lines: &'a Lines,
+) -> impl Future<Output = Result<R, ChannelError>> + 'a
 where
     F: Future<Output = R> + 'a,
 {
