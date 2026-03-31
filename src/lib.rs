@@ -599,6 +599,8 @@ impl<'a, const N: usize, const BUF: usize> Runner<'a, N, BUF> {
                     }
                 }
             }
+
+            embassy_futures::yield_now().await;
         }
 
         for id in (0..N).rev() {
