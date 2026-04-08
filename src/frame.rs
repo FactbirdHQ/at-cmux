@@ -155,7 +155,7 @@ impl<'a> Information<'a> {
             Information::ModemStatusCommand(inner) => inner.cr = CR::Response,
             Information::NonSupportedCommandResponse(inner) => inner.cr = CR::Response,
             Information::RemoteLineStatusCommand(inner) => inner.cr = CR::Response,
-            _ => todo!(),
+            _ => unreachable!("unsupported types handled before send_ack"),
         }
         Uih { id: 0, information }.write(writer).await
     }
@@ -196,16 +196,16 @@ impl<'a> Information<'a> {
     fn wire_len(&self) -> usize {
         match self {
             Information::ParameterNegotiation(inner) => inner.wire_len(),
-            Information::PowerSavingControl => todo!(),
+            Information::PowerSavingControl => unreachable!("handled as unsupported"),
             Information::MultiplexerCloseDown(inner) => inner.wire_len(),
-            Information::TestCommand => todo!(),
+            Information::TestCommand => unreachable!("handled as unsupported"),
             Information::FlowControlOnCommand(inner) => inner.wire_len(),
             Information::FlowControlOffCommand(inner) => inner.wire_len(),
             Information::ModemStatusCommand(inner) => inner.wire_len(),
             Information::NonSupportedCommandResponse(inner) => inner.wire_len(),
-            Information::RemotePortNegotiationCommand => todo!(),
+            Information::RemotePortNegotiationCommand => unreachable!("handled as unsupported"),
             Information::RemoteLineStatusCommand(inner) => inner.wire_len(),
-            Information::ServiceNegotiationCommand => todo!(),
+            Information::ServiceNegotiationCommand => unreachable!("handled as unsupported"),
             Information::Data(d) => d.len(),
         }
     }
@@ -222,11 +222,11 @@ impl<'a> Information<'a> {
                 .write_all(d)
                 .await
                 .map_err(|e| Error::Write(e.kind())),
-            Information::RemotePortNegotiationCommand => todo!(),
-            Information::PowerSavingControl => todo!(),
+            Information::RemotePortNegotiationCommand => unreachable!("handled as unsupported"),
+            Information::PowerSavingControl => unreachable!("handled as unsupported"),
             Information::MultiplexerCloseDown(inner) => inner.write(writer).await,
-            Information::TestCommand => todo!(),
-            Information::ServiceNegotiationCommand => todo!(),
+            Information::TestCommand => unreachable!("handled as unsupported"),
+            Information::ServiceNegotiationCommand => unreachable!("handled as unsupported"),
         }
     }
 
@@ -284,7 +284,7 @@ impl<'a> Information<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum FrameType {
     /// Set Asynchronous Balanced Mode (SABM) command
@@ -353,7 +353,7 @@ impl Info for ParameterNegotiation {
     }
 
     fn wire_len(&self) -> usize {
-        todo!()
+        10 // 2 type+len header bytes + 8 data bytes
     }
 
     async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), Error> {
@@ -607,6 +607,12 @@ pub struct Break {
     pub len: u8,
 }
 
+impl Break {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// Remote Line Status Octets
 #[bitfield(u8, order = Lsb)]
 #[derive(PartialEq, Eq)]
@@ -790,77 +796,46 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
         Ok(info)
     }
 
-    pub(crate) async fn copy<W: embedded_io_async::Write>(
-        &mut self,
-        w: &mut W,
-    ) -> Result<(), Error> {
+    /// Copy frame data directly into a pre-allocated slice.
+    ///
+    /// Unlike `copy()`, this writes to a fixed buffer rather than an async
+    /// writer, so it never blocks on backpressure. Used with bbqueue grants
+    /// where the buffer is allocated before reading.
+    pub(crate) async fn copy_to_slice(&mut self, dest: &mut [u8]) -> Result<(), Error> {
         let total_len = self.len;
         let frame_id = self.id;
+        let mut offset = 0;
 
         while self.len != 0 {
-            let remaining = self.len;
-            let copied_so_far = total_len - remaining;
-
             let buf = match self.reader.fill_buf().await {
                 Ok(buf) => buf,
                 Err(e) => {
-                    let err = Error::Read(e.kind());
                     error!(
-                        "Frame[id={}, type={:?}]: fill_buf failed! Copied {}/{} bytes, {} remaining. Error: {:?}",
-                        frame_id, self.frame_type, copied_so_far, total_len, remaining, err
+                        "Frame[id={}, type={:?}]: fill_buf failed during copy_to_slice! {}/{} bytes copied.",
+                        frame_id, self.frame_type, offset, total_len
                     );
-                    error!(
-                        "Frame[id={}, type={:?}]: This may be due to UART corruption. Frame header claimed {} bytes but stream failed mid-frame.",
-                        frame_id, self.frame_type, total_len
-                    );
-                    return Err(err);
+                    return Err(Error::Read(e.kind()));
                 }
             };
 
             if buf.is_empty() {
                 error!(
-                    "Frame[id={}, type={:?}]: Unexpected EOF! Copied {}/{} bytes, {} remaining.",
-                    frame_id, self.frame_type, copied_so_far, total_len, remaining
-                );
-                error!(
-                    "Frame[id={}, type={:?}]: Frame length may have been wrong, or stream corrupted mid-frame.",
-                    frame_id, self.frame_type
+                    "Frame[id={}, type={:?}]: Unexpected EOF in copy_to_slice! {}/{} bytes copied.",
+                    frame_id, self.frame_type, offset, total_len
                 );
                 return Err(Error::Read(embedded_io_async::ErrorKind::BrokenPipe));
             }
 
             let n = buf.len().min(self.len);
-
-            // FIXME: This should be re-written in a way that allows us to set channel flowcontrol if `w` cannot receive more bytes
-            let n = match w.write(&buf[..n]).await {
-                Ok(written) => written,
-                Err(e) => {
-                    let err = Error::Write(e.kind());
-                    error!(
-                        "Frame[id={}, type={:?}]: write failed! Copied {}/{} bytes, {} remaining. Error: {:?}",
-                        frame_id, self.frame_type, copied_so_far, total_len, remaining, err
-                    );
-                    return Err(err);
-                }
-            };
+            dest[offset..offset + n].copy_from_slice(&buf[..n]);
 
             if self.frame_type == FrameType::Ui {
                 self.fcs.update(&buf[..n]);
             }
+
             self.reader.consume(n);
             self.len -= n;
-        }
-
-        match w.flush().await {
-            Ok(()) => {}
-            Err(e) => {
-                let err = Error::Write(e.kind());
-                error!(
-                    "RxHeader copy: flush failed after copying {} bytes: {:?}",
-                    total_len, err
-                );
-                return Err(err);
-            }
+            offset += n;
         }
 
         Ok(())
@@ -974,7 +949,7 @@ pub trait Frame {
 
     fn id(&self) -> u8;
 
-    fn information(&self) -> Option<&Information> {
+    fn information(&self) -> Option<&Information<'_>> {
         None
     }
 
@@ -1131,7 +1106,7 @@ impl<'d> Frame for Uih<'d> {
         PF::Final as u8
     }
 
-    fn information(&self) -> Option<&Information> {
+    fn information(&self) -> Option<&Information<'_>> {
         Some(&self.information)
     }
 }
@@ -1174,12 +1149,11 @@ mod tests {
         let mut reader = &data[..];
 
         let mut channel_buf = [0u8; 256];
-        let mut writer = &mut channel_buf[..];
 
         let mut header = RxHeader::read(&mut reader).await.unwrap();
 
         let len = header.len;
-        header.copy(&mut writer).await.unwrap();
+        header.copy_to_slice(&mut channel_buf[..len]).await.unwrap();
 
         header.finalize().await.unwrap();
 
@@ -1272,9 +1246,9 @@ mod tests {
         let mut header = RxHeader::read(&mut reader).await.unwrap();
         assert_eq!(header.frame_type, FrameType::Ui);
 
+        let len = header.len;
         let mut channel_buf = [0u8; 16];
-        let mut channel_writer = &mut channel_buf[..];
-        header.copy(&mut channel_writer).await.unwrap();
+        header.copy_to_slice(&mut channel_buf[..len]).await.unwrap();
         header.finalize().await.unwrap();
     }
 
@@ -1286,9 +1260,9 @@ mod tests {
 
         let mut reader = &frame[..frame.len() - 1];
         let mut header = RxHeader::read(&mut reader).await.unwrap();
+        let len = header.len;
         let mut channel_buf = [0u8; 8];
-        let mut channel_writer = &mut channel_buf[..];
-        header.copy(&mut channel_writer).await.unwrap();
+        header.copy_to_slice(&mut channel_buf[..len]).await.unwrap();
 
         match header.finalize().await {
             Err(Error::Read(embedded_io_async::ErrorKind::BrokenPipe)) => {}

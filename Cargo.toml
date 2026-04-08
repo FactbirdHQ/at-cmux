@@ -17,28 +17,29 @@ documentation = "https://docs.rs/at-cmux"
 readme = "README.md"
 
 [features]
-defmt = ["dep:defmt"]
+defmt = ["dep:defmt", "embedded-io-async/defmt"]
 log = ["dep:log"]
 
 [dependencies]
-defmt = { version = "0.3", optional = true }
-log = { version = "0.4.14", optional = true }
+defmt = { version = "1", optional = true }
+log = { version = "0.4", optional = true }
 
 heapless = { version = "0.9", default-features = false }
-futures = { version = "0.3.17", default-features = false, features = [
-    "async-await",
-] }
 
-bitfield-struct = "0.8.0"
+bitfield-struct = "0.8"
 
-embedded-io-async = { version = "0.6.1" }
-embassy-futures = { version = "0.1.2" }
-embassy-sync = { version = "0.7.0" }
+embedded-io-async = "0.7"
+embassy-futures = "0.1"
+embassy-sync = "0.8"
 
 crc = "3.0"
+bbqueue = { git = "https://github.com/jamesmunns/bbqueue", default-features = false, features = [
+    "maitake-sync-0_3",
+    "critical-section",
+] }
 
 [dev-dependencies]
-tokio = { version = "1.37", features = ["rt", "macros"] }
+tokio = { version = "1.50", features = ["rt", "macros"] }
 
 [package.metadata.docs.rs]
 features = ["defmt"]
