@@ -23,7 +23,7 @@ mod frame;
 use core::cell::Cell;
 use core::future::{poll_fn, Future};
 use core::mem::MaybeUninit;
-use core::pin::pin;
+use core::pin::Pin;
 use core::task::Poll;
 
 use embassy_futures::select::{select, select_slice, Either};
@@ -398,7 +398,7 @@ async fn tx_loop<const N: usize, const BUF: usize, W: embedded_io_async::Write>(
             continue;
         }
 
-        let (buf, j) = select_slice(pin!(&mut futs)).await;
+        let (buf, j) = select_slice(Pin::new(futs.as_mut_slice())).await;
         let i = idx_map[j];
         let len = buf.len().min(max_frame_size);
 
