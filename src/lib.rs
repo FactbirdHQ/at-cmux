@@ -28,10 +28,12 @@ use core::task::Poll;
 
 use embassy_futures::select::{select, select_slice, Either};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+// TEMP (diag branch): time the two run-loop park points.
 use embassy_sync::mutex::Mutex;
 use embassy_sync::pipe::{Pipe, Reader, Writer};
 use embassy_sync::signal::Signal;
 use embassy_sync::waitqueue::AtomicWaker;
+use embassy_time::{Duration, Instant};
 pub use frame::{Break, Control};
 use frame::{Frame, Information, MultiplexerCloseDown};
 use heapless::Vec;
@@ -410,6 +412,7 @@ async fn tx_loop<const N: usize, const BUF: usize, W: embedded_io_async::Write>(
                 information: Information::Data(&buf[..len]),
             };
 
+            let tx_write_start = Instant::now();
             if let Err(e) = frame.write(&mut *w).await {
                 error!(
                     "CMUX Runner: CH{} failed to write UIH frame: {:?}",
@@ -417,6 +420,18 @@ async fn tx_loop<const N: usize, const BUF: usize, W: embedded_io_async::Write>(
                     e
                 );
                 return Err(e);
+            }
+            // TEMP diag: a long block here means the runner is parked writing/
+            // flushing a data frame to the modem UART — the whole mux is stuck
+            // (no RX serviced either) until the modem drains our TX.
+            let tx_write_waited = tx_write_start.elapsed();
+            if tx_write_waited > Duration::from_millis(100) {
+                warn!(
+                    "[cmux] TX frame write blocked {} ms (ch {}, {} bytes) — parked writing/flushing to modem",
+                    tx_write_waited.as_millis(),
+                    i + 1,
+                    len
+                );
             }
             trace!("CMUX TX: CH{} {} bytes", i + 1, len);
         }
@@ -674,6 +689,7 @@ async fn rx_loop<
                             }
                         };
 
+                        let rx_copy_start = Instant::now();
                         if let Err(e) = header.copy_to_slice(&mut grant[..frame_len]).await {
                             // Grant is dropped here → auto-aborted, consumer sees nothing
                             drop(grant);
@@ -691,6 +707,18 @@ async fn rx_loop<
                                 error!("Failed to finalize after copy error: {:?}", fin_err);
                             }
                             continue;
+                        }
+                        // TEMP diag: a long block here means the runner is parked
+                        // reading a frame's payload from the modem UART (RX-side
+                        // stall) rather than parked on TX.
+                        let rx_copy_waited = rx_copy_start.elapsed();
+                        if rx_copy_waited > Duration::from_millis(100) {
+                            warn!(
+                                "[cmux] RX copy blocked {} ms (ch {}, {} bytes) — parked reading frame payload from modem",
+                                rx_copy_waited.as_millis(),
+                                channel_id + 1,
+                                frame_len
+                            );
                         }
 
                         // FCS is checked in finalize(). If it fails, the grant

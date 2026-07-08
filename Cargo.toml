@@ -31,6 +31,8 @@ bitfield-struct = "0.8"
 embedded-io-async = "0.7"
 embassy-futures = "0.1"
 embassy-sync = "0.8"
+# TEMP (diag branch): timing for park-point instrumentation only.
+embassy-time = "0.5"
 
 crc = "3.0"
 bbqueue = { git = "https://github.com/jamesmunns/bbqueue", default-features = false, features = [
