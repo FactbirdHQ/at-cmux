@@ -99,10 +99,9 @@ pub struct Mux<const N: usize, const BUF: usize> {
 
 /// A logical CMUX channel for reading and writing data.
 pub struct Channel<'a, const BUF: usize> {
-    rx: FramedBufReader<'a, BUF>,
-    tx: Writer<'a, NoopRawMutex, BUF>,
-    lines: &'a Lines,
-    line_status_updated: &'a Signal<NoopRawMutex, ()>,
+    rx: ChannelRx<'a, BUF>,
+    tx: ChannelTx<'a, BUF>,
+    lines: ChannelLines<'a, BUF>,
 }
 
 /// Receive half of a CMUX channel.
@@ -168,7 +167,7 @@ pub struct ChannelTx<'a, const BUF: usize> {
 }
 
 /// Handle to access modem control lines for a channel.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct ChannelLines<'a, const BUF: usize> {
     lines: &'a Lines,
     line_status_updated: &'a Signal<NoopRawMutex, ()>,
@@ -217,11 +216,22 @@ impl<const N: usize, const BUF: usize> Mux<N, BUF> {
 
         for (i, (tx, rx)) in self.tx.iter_mut().zip(self.rx.iter()).enumerate() {
             let (tx_r, tx_w) = tx.split();
+            let lines = &self.lines[i];
             let ch = Channel {
-                rx: FramedBufReader::new(rx.framed_consumer()),
-                tx: tx_w,
-                lines: &self.lines[i],
-                line_status_updated: &self.line_status_updated,
+                rx: ChannelRx {
+                    rx: FramedBufReader::new(rx.framed_consumer()),
+                    lines,
+                    line_status_updated: &self.line_status_updated,
+                },
+                tx: ChannelTx {
+                    tx: tx_w,
+                    lines,
+                    line_status_updated: &self.line_status_updated,
+                },
+                lines: ChannelLines {
+                    lines,
+                    line_status_updated: &self.line_status_updated,
+                },
             };
             unsafe {
                 chs.set(i, ch);
@@ -913,22 +923,17 @@ impl<'a, const BUF: usize> Channel<'a, BUF> {
         ChannelTx<'a, BUF>,
         ChannelLines<'a, BUF>,
     ) {
-        (
-            ChannelRx {
-                rx: self.rx,
-                lines: self.lines,
-                line_status_updated: self.line_status_updated,
-            },
-            ChannelTx {
-                tx: self.tx,
-                lines: self.lines,
-                line_status_updated: self.line_status_updated,
-            },
-            ChannelLines {
-                lines: self.lines,
-                line_status_updated: self.line_status_updated,
-            },
-        )
+        (self.rx, self.tx, self.lines)
+    }
+
+    pub fn split_ref(
+        &mut self,
+    ) -> (
+        &mut ChannelRx<'a, BUF>,
+        &mut ChannelTx<'a, BUF>,
+        &ChannelLines<'a, BUF>,
+    ) {
+        (&mut self.rx, &mut self.tx, &self.lines)
     }
 
     // Note: set_lines, get_lines, set_hangup_detection, clear_hangup_detection
@@ -936,33 +941,30 @@ impl<'a, const BUF: usize> Channel<'a, BUF> {
 
     /// Get a handle to the channel's modem control lines.
     pub fn split_lines(&self) -> ChannelLines<'a, BUF> {
-        ChannelLines {
-            lines: self.lines,
-            line_status_updated: self.line_status_updated,
-        }
+        self.lines
     }
 
     /// Set the modem control lines for this channel.
     pub fn set_lines(&self, control: Control, brk: Option<Break>) {
-        self.lines.tx.set((control, brk));
-        self.line_status_updated.signal(());
+        self.lines.lines.tx.set((control, brk));
+        self.lines.line_status_updated.signal(());
     }
 
     /// Get the current modem control lines for this channel.
     pub fn get_lines(&self) -> (Control, Option<Break>) {
-        self.lines.rx.get()
+        self.lines.lines.rx.get()
     }
 
     /// Set hangup detection parameters.
     pub fn set_hangup_detection(&self, mask: u16, val: u16) {
-        self.lines.hangup_mask.set(Some((mask, val)));
-        self.lines.check_hangup();
+        self.lines.lines.hangup_mask.set(Some((mask, val)));
+        self.lines.lines.check_hangup();
     }
 
     /// Clear hangup detection.
     pub fn clear_hangup_detection(&self) {
-        self.lines.hangup_mask.set(None);
-        self.lines.check_hangup();
+        self.lines.lines.hangup_mask.set(None);
+        self.lines.lines.check_hangup();
     }
 }
 
@@ -1035,13 +1037,13 @@ impl<'a, const BUF: usize> embedded_io_async::ErrorType for Channel<'a, BUF> {
 
 impl<'a, const BUF: usize> embedded_io_async::Read for Channel<'a, BUF> {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
-        check_hangup(self.rx.read(buf), self.lines).await
+        self.rx.read(buf).await
     }
 }
 
 impl<'a, const BUF: usize> embedded_io_async::BufRead for Channel<'a, BUF> {
     async fn fill_buf(&mut self) -> Result<&[u8], Self::Error> {
-        check_hangup(self.rx.fill_buf(), self.lines).await
+        self.rx.fill_buf().await
     }
 
     fn consume(&mut self, amt: usize) {
@@ -1051,12 +1053,11 @@ impl<'a, const BUF: usize> embedded_io_async::BufRead for Channel<'a, BUF> {
 
 impl<'a, const BUF: usize> embedded_io_async::Write for Channel<'a, BUF> {
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
-        check_hangup(self.tx.write(buf), self.lines).await
+        self.tx.write(buf).await
     }
 
     async fn flush(&mut self) -> Result<(), Self::Error> {
-        self.tx.flush().await;
-        Ok(())
+        self.tx.flush().await
     }
 }
 
