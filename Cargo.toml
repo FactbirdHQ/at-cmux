@@ -33,7 +33,7 @@ embassy-futures = "0.1"
 embassy-sync = "0.8"
 
 crc = "3.0"
-bbqueue = { git = "https://github.com/jamesmunns/bbqueue", default-features = false, features = [
+bbqueue = { version = "0.7", default-features = false, features = [
     "maitake-sync-0_3",
     "critical-section",
 ] }
