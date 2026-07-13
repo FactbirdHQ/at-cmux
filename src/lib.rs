@@ -33,7 +33,7 @@ use embassy_sync::mutex::Mutex;
 use embassy_sync::pipe::{Pipe, Reader, Writer};
 use embassy_sync::signal::Signal;
 use embassy_sync::waitqueue::AtomicWaker;
-pub use frame::{Break, Control};
+pub use frame::{Break, Control, FrameError};
 use frame::{Frame, Information, MultiplexerCloseDown};
 use heapless::Vec;
 
@@ -43,7 +43,7 @@ use bbqueue::traits::notifier::maitake::MaiNotSpsc;
 use bbqueue::traits::storage::Inline;
 use bbqueue::BBQueue;
 
-use crate::frame::{Error, FrameType, NonSupportedCommandResponse};
+use crate::frame::{FrameType, NonSupportedCommandResponse};
 
 /// RX queue type: inline storage, critical-section coordination, maitake async notification.
 type RxQueue<const BUF: usize> = BBQueue<Inline<BUF>, CsCoord, MaiNotSpsc>;
@@ -262,7 +262,7 @@ impl<'a, const N: usize, const BUF: usize> Runner<'a, N, BUF> {
         mut port_r: R,
         port_w: W,
         max_frame_size: usize,
-    ) -> Result<Infallible, Error> {
+    ) -> Result<Infallible, FrameError> {
         // Capture references to Cell fields for the OnDrop — avoids borrowing self
         let control_opened = &self.control_channel_opened;
         let control_pending = &self.control_pending_command;
@@ -379,7 +379,7 @@ async fn tx_loop<const N: usize, const BUF: usize, W: embedded_io_async::Write>(
     port_w: &Mutex<NoopRawMutex, W>,
     fc_changed: &Signal<NoopRawMutex, ()>,
     max_frame_size: usize,
-) -> Result<Infallible, Error> {
+) -> Result<Infallible, FrameError> {
     loop {
         // Build futures only for channels that are open and not flow-controlled
         let mut futs: Vec<_, N> = Vec::new();
@@ -433,7 +433,7 @@ async fn send_msc_fc<W: embedded_io_async::Write>(
     port_w: &Mutex<NoopRawMutex, W>,
     channel_id: usize,
     fc_on: bool,
-) -> Result<(), Error> {
+) -> Result<(), FrameError> {
     let control = frame::Control::new()
         .with_fc(fc_on)
         .with_rtc(true)
@@ -467,7 +467,7 @@ async fn rx_loop<
     control_pending_command: &Cell<Option<FrameType>>,
     port_w: &Mutex<NoopRawMutex, W>,
     fc_changed: &Signal<NoopRawMutex, ()>,
-) -> Result<Infallible, Error> {
+) -> Result<Infallible, FrameError> {
     let mut consecutive_errors = 0u32;
     const MAX_CONSECUTIVE_ERRORS: u32 = 10;
 
@@ -529,7 +529,7 @@ async fn rx_loop<
                                     if let Err(e) = header.finalize().await {
                                         error!("Failed to finalize CLD frame: {:?}", e);
                                     }
-                                    return Err(Error::MultiplexerCloseDown);
+                                    return Err(FrameError::MultiplexerCloseDown);
                                 }
                                 Information::TestCommand
                                 | Information::PowerSavingControl
@@ -580,7 +580,7 @@ async fn rx_loop<
                                             "Channel likely corrupted. CMUX should be restarted!"
                                         );
                                         lines.opened.set(false);
-                                        return Err(Error::MalformedFrame);
+                                        return Err(FrameError::MalformedFrame);
                                     }
 
                                     lines.rx.set((new_control, new_brk));
@@ -803,7 +803,7 @@ async fn rx_loop<
                         if let Err(e) = header.finalize().await {
                             error!("Failed to finalize DM frame: {:?}", e);
                         }
-                        return Err(Error::MalformedFrame);
+                        return Err(FrameError::MalformedFrame);
                     }
                     FrameType::Dm => {
                         warn!("Logical channel {} couldn't be opened", header.id() - 1);
@@ -819,7 +819,7 @@ async fn rx_loop<
                             if let Err(e) = header.finalize().await {
                                 error!("Failed to finalize: {:?}", e);
                             }
-                            return Err(Error::MultiplexerCloseDown);
+                            return Err(FrameError::MultiplexerCloseDown);
                         } else {
                             let mut w = port_w.lock().await;
                             if let Err(e) = (frame::Dm { id: 0 }).write(&mut *w).await {
