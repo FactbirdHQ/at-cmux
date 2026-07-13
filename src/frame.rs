@@ -95,7 +95,7 @@ pub enum InformationType {
 }
 
 impl TryFrom<u8> for InformationType {
-    type Error = Error;
+    type Error = FrameError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         Ok(match value & !(CR | EA) {
@@ -110,7 +110,7 @@ impl TryFrom<u8> for InformationType {
             0x90 => Self::RemotePortNegotiationCommand,
             0x50 => Self::RemoteLineStatusCommand,
             0xD0 => Self::ServiceNegotiationCommand,
-            n => return Err(Error::UnknownInformationType(n)),
+            n => return Err(FrameError::UnknownInformationType(n)),
         })
     }
 }
@@ -144,7 +144,7 @@ pub enum Information<'a> {
 }
 
 impl<'a> Information<'a> {
-    pub async fn send_ack<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), Error> {
+    pub async fn send_ack<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), FrameError> {
         let mut information = self.clone();
 
         match &mut information {
@@ -210,7 +210,7 @@ impl<'a> Information<'a> {
         }
     }
 
-    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), Error> {
+    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), FrameError> {
         match self {
             Information::ParameterNegotiation(inner) => inner.write(writer).await,
             Information::FlowControlOnCommand(inner) => inner.write(writer).await,
@@ -221,7 +221,7 @@ impl<'a> Information<'a> {
             Information::Data(d) => writer
                 .write_all(d)
                 .await
-                .map_err(|e| Error::Write(e.kind())),
+                .map_err(|e| FrameError::Write(e.kind())),
             Information::RemotePortNegotiationCommand => unreachable!("handled as unsupported"),
             Information::PowerSavingControl => unreachable!("handled as unsupported"),
             Information::MultiplexerCloseDown(inner) => inner.write(writer).await,
@@ -230,7 +230,7 @@ impl<'a> Information<'a> {
         }
     }
 
-    pub fn parse(buf: &[u8]) -> Result<Self, Error> {
+    pub fn parse(buf: &[u8]) -> Result<Self, FrameError> {
         let info_type = InformationType::try_from(buf[0])?;
         let cr = CR::from(buf[0]);
 
@@ -302,7 +302,7 @@ pub enum FrameType {
 }
 
 impl TryFrom<u8> for FrameType {
-    type Error = Error;
+    type Error = FrameError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         Ok(match value & !PF {
@@ -312,14 +312,14 @@ impl TryFrom<u8> for FrameType {
             0x43 => Self::Disc,
             0xEF => Self::Uih,
             0x03 => Self::Ui,
-            n => return Err(Error::UnknownFrameType(n)),
+            n => return Err(FrameError::UnknownFrameType(n)),
         })
     }
 }
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error {
+pub enum FrameError {
     Read(embedded_io_async::ErrorKind),
     Write(embedded_io_async::ErrorKind),
     UnknownFrameType(u8),
@@ -336,7 +336,7 @@ pub trait Info {
 
     fn wire_len(&self) -> usize;
 
-    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), Error>;
+    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), FrameError>;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -356,7 +356,7 @@ impl Info for ParameterNegotiation {
         10 // 2 type+len header bytes + 8 data bytes
     }
 
-    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), Error> {
+    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), FrameError> {
         let buf = [0u8; 8];
 
         // TODO: Add Parameters!
@@ -364,7 +364,7 @@ impl Info for ParameterNegotiation {
         writer
             .write_all(&buf)
             .await
-            .map_err(|e| Error::Write(e.kind()))
+            .map_err(|e| FrameError::Write(e.kind()))
     }
 }
 
@@ -385,11 +385,11 @@ impl Info for MultiplexerCloseDown {
         1
     }
 
-    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), Error> {
+    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), FrameError> {
         writer
             .write_all(&[Self::INFORMATION_TYPE as u8 | self.cr as u8 | EA])
             .await
-            .map_err(|e| Error::Write(e.kind()))
+            .map_err(|e| FrameError::Write(e.kind()))
     }
 }
 
@@ -410,11 +410,11 @@ impl Info for FlowControlOffCommand {
         1
     }
 
-    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), Error> {
+    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), FrameError> {
         writer
             .write_all(&[Self::INFORMATION_TYPE as u8 | self.cr as u8 | EA])
             .await
-            .map_err(|e| Error::Write(e.kind()))
+            .map_err(|e| FrameError::Write(e.kind()))
     }
 }
 
@@ -435,11 +435,11 @@ impl Info for FlowControlOnCommand {
         1
     }
 
-    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), Error> {
+    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), FrameError> {
         writer
             .write_all(&[Self::INFORMATION_TYPE as u8 | self.cr as u8 | EA])
             .await
-            .map_err(|e| Error::Write(e.kind()))
+            .map_err(|e| FrameError::Write(e.kind()))
     }
 }
 
@@ -463,7 +463,7 @@ impl Info for ModemStatusCommand {
         self.brk.map_or(4, |_| 5)
     }
 
-    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), Error> {
+    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), FrameError> {
         let len = self.wire_len() as u8 - 2;
 
         writer
@@ -474,13 +474,13 @@ impl Info for ModemStatusCommand {
                 self.control.with_ea(true).into_bits(),
             ])
             .await
-            .map_err(|e| Error::Write(e.kind()))?;
+            .map_err(|e| FrameError::Write(e.kind()))?;
 
         if let Some(brk) = self.brk {
             writer
                 .write_all(&[brk.with_ea(true).into_bits()])
                 .await
-                .map_err(|e| Error::Write(e.kind()))?;
+                .map_err(|e| FrameError::Write(e.kind()))?;
         }
 
         Ok(())
@@ -505,14 +505,14 @@ impl Info for NonSupportedCommandResponse {
         2
     }
 
-    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), Error> {
+    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), FrameError> {
         writer
             .write_all(&[
                 Self::INFORMATION_TYPE as u8 | self.cr as u8 | EA,
                 self.command_type as u8 | self.cr as u8 | EA,
             ])
             .await
-            .map_err(|e| Error::Write(e.kind()))
+            .map_err(|e| FrameError::Write(e.kind()))
     }
 }
 
@@ -535,7 +535,7 @@ impl Info for RemoteLineStatusCommand {
         3
     }
 
-    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), Error> {
+    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), FrameError> {
         writer
             .write_all(&[
                 Self::INFORMATION_TYPE as u8 | self.cr as u8 | EA,
@@ -543,7 +543,7 @@ impl Info for RemoteLineStatusCommand {
                 self.remote_line_status.into_bits(),
             ])
             .await
-            .map_err(|e| Error::Write(e.kind()))
+            .map_err(|e| FrameError::Write(e.kind()))
     }
 }
 
@@ -657,7 +657,7 @@ impl<'a, R: embedded_io_async::BufRead> core::fmt::Debug for RxHeader<'a, R> {
 }
 
 impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
-    pub(crate) async fn read(reader: &'a mut R) -> Result<Self, Error> {
+    pub(crate) async fn read(reader: &'a mut R) -> Result<Self, FrameError> {
         // Maximum bytes to search for FLAG before giving up
         // This prevents infinite loops on completely corrupted streams
         const MAX_FLAG_SEARCH: usize = 1024;
@@ -679,7 +679,7 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
                 total_search_count += 1;
                 if total_search_count >= MAX_FLAG_SEARCH {
                     error!("Failed to find valid frame after searching {} bytes. Stream may be corrupted.", total_search_count);
-                    return Err(Error::MalformedFrame);
+                    return Err(FrameError::MalformedFrame);
                 }
             }
 
@@ -697,7 +697,7 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
                         "Found {} consecutive FLAG bytes. Stream may be stuck.",
                         flag_count
                     );
-                    return Err(Error::MalformedFrame);
+                    return Err(FrameError::MalformedFrame);
                 }
             }
 
@@ -709,7 +709,7 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
             // Validate frame type - if invalid, this is likely a false FLAG
             let frame_type = match FrameType::try_from(header[1]) {
                 Ok(ft) => ft,
-                Err(Error::UnknownFrameType(byte)) => {
+                Err(FrameError::UnknownFrameType(byte)) => {
                     warn!("Unknown frame type {:#02x} ({}). Header bytes: [{:#02x}, {:#02x}, {:#02x}]. Likely false FLAG, continuing search...",
                         byte, byte, header[0], header[1], header[2]);
                     // This was a false FLAG, continue searching for next one
@@ -764,11 +764,11 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
         self.id
     }
 
-    async fn read_exact(r: &mut R, mut data: &mut [u8]) -> Result<(), Error> {
+    async fn read_exact(r: &mut R, mut data: &mut [u8]) -> Result<(), FrameError> {
         while !data.is_empty() {
-            let buf = r.fill_buf().await.map_err(|e| Error::Read(e.kind()))?;
+            let buf = r.fill_buf().await.map_err(|e| FrameError::Read(e.kind()))?;
             if buf.is_empty() {
-                return Err(Error::Read(embedded_io_async::ErrorKind::BrokenPipe));
+                return Err(FrameError::Read(embedded_io_async::ErrorKind::BrokenPipe));
             }
             let n = buf.len().min(data.len());
             data[..n].copy_from_slice(&buf[..n]);
@@ -778,7 +778,7 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
         Ok(())
     }
 
-    pub(crate) async fn read_information<'d>(&mut self) -> Result<Information<'d>, Error> {
+    pub(crate) async fn read_information<'d>(&mut self) -> Result<Information<'d>, FrameError> {
         assert!(self.len <= 24);
 
         let mut buf = [0u8; 24];
@@ -801,7 +801,7 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
     /// Unlike `copy()`, this writes to a fixed buffer rather than an async
     /// writer, so it never blocks on backpressure. Used with bbqueue grants
     /// where the buffer is allocated before reading.
-    pub(crate) async fn copy_to_slice(&mut self, dest: &mut [u8]) -> Result<(), Error> {
+    pub(crate) async fn copy_to_slice(&mut self, dest: &mut [u8]) -> Result<(), FrameError> {
         let total_len = self.len;
         let frame_id = self.id;
         let mut offset = 0;
@@ -814,7 +814,7 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
                         "Frame[id={}, type={:?}]: fill_buf failed during copy_to_slice! {}/{} bytes copied.",
                         frame_id, self.frame_type, offset, total_len
                     );
-                    return Err(Error::Read(e.kind()));
+                    return Err(FrameError::Read(e.kind()));
                 }
             };
 
@@ -823,7 +823,7 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
                     "Frame[id={}, type={:?}]: Unexpected EOF in copy_to_slice! {}/{} bytes copied.",
                     frame_id, self.frame_type, offset, total_len
                 );
-                return Err(Error::Read(embedded_io_async::ErrorKind::BrokenPipe));
+                return Err(FrameError::Read(embedded_io_async::ErrorKind::BrokenPipe));
             }
 
             let n = buf.len().min(self.len);
@@ -841,16 +841,16 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
         Ok(())
     }
 
-    pub async fn finalize(mut self) -> Result<(), Error> {
+    pub async fn finalize(mut self) -> Result<(), FrameError> {
         while self.len > 0 {
             // Discard any information here
             let buf = self
                 .reader
                 .fill_buf()
                 .await
-                .map_err(|e| Error::Read(e.kind()))?;
+                .map_err(|e| FrameError::Read(e.kind()))?;
             if buf.is_empty() {
-                return Err(Error::Read(embedded_io_async::ErrorKind::BrokenPipe));
+                return Err(FrameError::Read(embedded_io_async::ErrorKind::BrokenPipe));
             }
             let n = buf.len().min(self.len);
             warn!("Discarding {} bytes of data in {:?}", n, self.frame_type);
@@ -877,7 +877,7 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
             if trailer[0] == FLAG {
                 // We already consumed the bytes, so we're positioned after trailer[1]
                 // The next read will start fresh
-                return Err(Error::MalformedFrame);
+                return Err(FrameError::MalformedFrame);
             }
 
             // Search forward for a FLAG to resynchronize
@@ -890,10 +890,10 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
                     .reader
                     .fill_buf()
                     .await
-                    .map_err(|e| Error::Read(e.kind()))?;
+                    .map_err(|e| FrameError::Read(e.kind()))?;
                 if buf.is_empty() {
                     error!("EOF while searching for FLAG after {} bytes", search_count);
-                    return Err(Error::Read(embedded_io_async::ErrorKind::BrokenPipe));
+                    return Err(FrameError::Read(embedded_io_async::ErrorKind::BrokenPipe));
                 }
 
                 // Look for FLAG byte in buffer
@@ -905,7 +905,7 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
                         "Found FLAG after searching {} bytes, stream resynchronized",
                         search_count + pos
                     );
-                    return Err(Error::MalformedFrame);
+                    return Err(FrameError::MalformedFrame);
                 }
 
                 // No FLAG in this buffer, consume it all and continue
@@ -918,7 +918,7 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
                         "Failed to find FLAG after searching {} bytes, giving up",
                         search_count
                     );
-                    return Err(Error::MalformedFrame);
+                    return Err(FrameError::MalformedFrame);
                 }
             }
         }
@@ -934,7 +934,7 @@ impl<'a, R: embedded_io_async::BufRead> RxHeader<'a, R> {
             );
             // Stream position should be OK (we're at the FLAG), so just return error
             // The next read will start at the FLAG we just validated
-            return Err(Error::Crc);
+            return Err(FrameError::Crc);
         }
 
         Ok(())
@@ -953,7 +953,7 @@ pub trait Frame {
         None
     }
 
-    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), Error> {
+    async fn write<W: embedded_io_async::Write>(&self, writer: &mut W) -> Result<(), FrameError> {
         let information_len = self.information().map_or(0, |i| i.wire_len());
 
         let fcs = if information_len < 128 {
@@ -967,7 +967,7 @@ pub trait Frame {
             writer
                 .write_all(&header)
                 .await
-                .map_err(|e| Error::Write(e.kind()))?;
+                .map_err(|e| FrameError::Write(e.kind()))?;
 
             0xFF - FCS.checksum(&header[1..])
         } else {
@@ -984,7 +984,7 @@ pub trait Frame {
             writer
                 .write_all(&header)
                 .await
-                .map_err(|e| Error::Write(e.kind()))?;
+                .map_err(|e| FrameError::Write(e.kind()))?;
 
             0xFF - FCS.checksum(&header[1..])
         };
@@ -996,9 +996,9 @@ pub trait Frame {
         writer
             .write_all(&[fcs, FLAG])
             .await
-            .map_err(|e| Error::Write(e.kind()))?;
+            .map_err(|e| FrameError::Write(e.kind()))?;
 
-        writer.flush().await.map_err(|e| Error::Write(e.kind()))?;
+        writer.flush().await.map_err(|e| FrameError::Write(e.kind()))?;
 
         Ok(())
     }
@@ -1265,7 +1265,7 @@ mod tests {
         header.copy_to_slice(&mut channel_buf[..len]).await.unwrap();
 
         match header.finalize().await {
-            Err(Error::Read(embedded_io_async::ErrorKind::BrokenPipe)) => {}
+            Err(FrameError::Read(embedded_io_async::ErrorKind::BrokenPipe)) => {}
             other => panic!("expected UnexpectedEof, got {:?}", other),
         }
     }
