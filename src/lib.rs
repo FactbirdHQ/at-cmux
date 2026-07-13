@@ -21,6 +21,7 @@ mod fmt;
 mod frame;
 
 use core::cell::Cell;
+use core::convert::Infallible;
 use core::future::{poll_fn, Future};
 use core::mem::MaybeUninit;
 use core::pin::Pin;
@@ -261,7 +262,7 @@ impl<'a, const N: usize, const BUF: usize> Runner<'a, N, BUF> {
         mut port_r: R,
         port_w: W,
         max_frame_size: usize,
-    ) -> Result<(), Error> {
+    ) -> Result<Infallible, Error> {
         // Capture references to Cell fields for the OnDrop — avoids borrowing self
         let control_opened = &self.control_channel_opened;
         let control_pending = &self.control_pending_command;
@@ -378,7 +379,7 @@ async fn tx_loop<const N: usize, const BUF: usize, W: embedded_io_async::Write>(
     port_w: &Mutex<NoopRawMutex, W>,
     fc_changed: &Signal<NoopRawMutex, ()>,
     max_frame_size: usize,
-) -> Result<(), Error> {
+) -> Result<Infallible, Error> {
     loop {
         // Build futures only for channels that are open and not flow-controlled
         let mut futs: Vec<_, N> = Vec::new();
@@ -466,7 +467,7 @@ async fn rx_loop<
     control_pending_command: &Cell<Option<FrameType>>,
     port_w: &Mutex<NoopRawMutex, W>,
     fc_changed: &Signal<NoopRawMutex, ()>,
-) -> Result<(), Error> {
+) -> Result<Infallible, Error> {
     let mut consecutive_errors = 0u32;
     const MAX_CONSECUTIVE_ERRORS: u32 = 10;
 
