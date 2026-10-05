@@ -12,7 +12,7 @@ categories = [
 ]
 license = "MIT OR Apache-2.0"
 edition = "2021"
-repository = "https://github.com/factbird/at-cmux"
+repository = "https://github.com/FactbirdHQ/at-cmux"
 documentation = "https://docs.rs/at-cmux"
 readme = "README.md"
 
